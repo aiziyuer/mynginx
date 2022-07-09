@@ -84,7 +84,7 @@ socks5.handle_request = function(socks5host, socks5port,
     if request_changer then
         target_host = request_changer(target_host)
     end
-    local target_port = 80
+    local target_port = 443
     do
         local status, message = socks5.connect(sosocket,
             target_host, target_port)
