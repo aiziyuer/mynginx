@@ -72,6 +72,10 @@ end
 
 socks5.handle_request = function(socks5host, socks5port,
         request_changer, response_changer, change_only_html)
+
+    ngx.log(ngx.NOTICE, '///////////////// socks5host: ', socks5host)
+    ngx.log(ngx.NOTICE, '///////////////// socks5port: ', socks5port)
+
     local sosocket = ngx.socket.connect(socks5host, socks5port)
     do
         local status, message = socks5.auth(sosocket)
@@ -81,6 +85,9 @@ socks5.handle_request = function(socks5host, socks5port,
         end
     end
     local target_host = ngx.req.get_headers()['Host']
+
+    ngx.log(ngx.NOTICE, '///////////////// Host: ', target_host)
+
     if request_changer then
         target_host = request_changer(target_host)
     end
@@ -93,12 +100,27 @@ socks5.handle_request = function(socks5host, socks5port,
             return
         end
     end
+
+    local sess, err = sosocket:sslhandshake()
+    if not sess then
+        ngx.say("failed to do SSL handhake: ", err)
+        return
+    end
+
+    ngx.log(ngx.NOTICE, 'SSL handhake: ', type(sess))
+
     -- read request
     local clheader = ngx.req.raw_header()
     if request_changer then
         clheader = request_changer(clheader)
     end
-    sosocket:send(clheader)
+
+
+    -- sosocket:send(clheader)
+    
+    ngx.log(ngx.NOTICE, 'request headers:\n', clheader)
+    sosocket:send("GET / HTTP/1.1\r\nUser-Agent: curl/7.78.0\r\nAccept: */*\r\nHost: dns.google.com\r\nConnection: close\r\n\r\n")
+    
     ngx.req.read_body()
     local clbody = ngx.req.get_body_data()
     if clbody then
@@ -107,6 +129,9 @@ socks5.handle_request = function(socks5host, socks5port,
         end
         sosocket:send(clbody)
     end
+
+    ngx.log(ngx.NOTICE, 'sosocket:receiveuntil')
+
     -- read response
     local soheader, message =
         sosocket:receiveuntil('\r\n\r\n')()
@@ -114,8 +139,13 @@ socks5.handle_request = function(socks5host, socks5port,
         ngx.say('No headers received from target: ' .. message)
         return
     end
+
+    ngx.log(ngx.NOTICE, 'handle body')
+
     local sobody_length = soheader:match(
         'Content%-Length%: (%d+)')
+        ngx.log(ngx.NOTICE, 'handle body sobody_length: ', sobody_length)
+
     local is_html = soheader:match('Content%-Type: text/html')
     local change = is_html or not change_only_html
     local clsocket = ngx.req.socket(true)
@@ -135,6 +165,7 @@ socks5.handle_request = function(socks5host, socks5port,
     else
         -- stream
         clsocket:send(soheader .. '\r\n\r\n')
+
         while true do
             local sobody, _, partial = sosocket:receive(CHUNK_SIZE)
             if not sobody then
