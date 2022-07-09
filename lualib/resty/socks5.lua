@@ -116,10 +116,30 @@ socks5.handle_request = function(socks5host, socks5port,
     end
 
 
+    local r = ''
+    local h = ngx.req.get_headers(nil, true)
+    r = r .. ngx.req.get_method() .. ' ' .. ngx.var.request_uri .. ' HTTP/' .. ngx.req.http_version() .. '\r\n'
+    local need_append_connection = true
+    for k, v in pairs(h) do
+        if k == 'Connection' then
+            need_append_connection = false
+        end
+        r = r.. k .. ': ' .. v .. '\r\n'
+    end
+
+    -- 如果请求头没有特别设置Connection, 那默认都认为不需要长连接, 直接传递close
+    if need_append_connection then
+        r = r .. 'Connection: close\r\n'
+    end
+    r = r .. '\r\n'
+
+
     -- sosocket:send(clheader)
+    -- sosocket:send("GET / HTTP/1.1\r\nUser-Agent: curl/7.78.0\r\nAccept: */*\r\nHost: www.google.com\r\nConnection: close\r\n\r\n")
+    sosocket:send(r)
     
-    ngx.log(ngx.NOTICE, 'request headers:\n', clheader)
-    sosocket:send("GET / HTTP/1.1\r\nUser-Agent: curl/7.78.0\r\nAccept: */*\r\nHost: dns.google.com\r\nConnection: close\r\n\r\n")
+    ngx.log(ngx.NOTICE, 'request raw headers:\n', clheader)
+    ngx.log(ngx.NOTICE, 'request headers:\n', r)
     
     ngx.req.read_body()
     local clbody = ngx.req.get_body_data()
@@ -139,12 +159,13 @@ socks5.handle_request = function(socks5host, socks5port,
         ngx.say('No headers received from target: ' .. message)
         return
     end
+    ngx.log(ngx.NOTICE, 'response headers:\n', soheader)
 
     ngx.log(ngx.NOTICE, 'handle body')
 
     local sobody_length = soheader:match(
         'Content%-Length%: (%d+)')
-        ngx.log(ngx.NOTICE, 'handle body sobody_length: ', sobody_length)
+    ngx.log(ngx.NOTICE, 'handle body sobody_length: ', soheader:match('Content%-Length%: (%d+)'))
 
     local is_html = soheader:match('Content%-Type: text/html')
     local change = is_html or not change_only_html
@@ -163,18 +184,27 @@ socks5.handle_request = function(socks5host, socks5port,
         end
         clsocket:send(soheader .. '\r\n\r\n' .. sobody)
     else
-        -- stream
+        
         clsocket:send(soheader .. '\r\n\r\n')
 
-        while true do
-            local sobody, _, partial = sosocket:receive(CHUNK_SIZE)
-            if not sobody then
-                clsocket:send(partial)
-                break
-            end
-            local bytes = clsocket:send(sobody)
-            if not bytes then
-                break
+        if sobody_length then
+
+            -- content
+            local sobody, _ = sosocket:receive(sobody_length)
+            clsocket:send(sobody)
+
+        else
+            -- stream
+            while true do
+                local sobody, _, partial = sosocket:receive(CHUNK_SIZE)
+                if not sobody then
+                    clsocket:send(partial)
+                    break
+                end
+                local bytes = clsocket:send(sobody)
+                if not bytes then
+                    break
+                end
             end
         end
     end
